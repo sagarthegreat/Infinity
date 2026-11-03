@@ -1,0 +1,9 @@
+{
+  "source_rows": 4158,
+  "kept": 4018,
+  "dropped_misaligned_or_silent": 140,
+  "min_alignment": 0.5,
+  "chunk_ms": 100,
+  "asr": "vosk / vosk-model-en-us-0.22-lgraph",
+  "corpus_passages": 19831
+}
