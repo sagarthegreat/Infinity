@@ -176,7 +176,7 @@ def plot_all(
         )
         ax.axhline(100 * curve[0]["final_recall"], ls="--", color="#16a34a", label="final transcript recall")
         ax.axvline(0, color="#0f172a", lw=1)
-        ax.text(10, 4, "last word ends", fontsize=8)
+        ax.text(20, 86, "last word\nends", fontsize=8, va="center")
         ax.set_xlabel("ms relative to end of speech")
         ax.set_ylabel("% of turns")
         ax.set_ylim(0, 100)

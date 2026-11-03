@@ -21,7 +21,7 @@ on those guesses, validates the best one against the final transcript, and
 hands the LLM context that is usually already there.
 
 ```text
-$ forehear replay --policy stable_prefix --profile rerank        # a real recording, real streaming ASR
+$ forehear replay --index 1 --policy stable_prefix --profile rerank   # a real recording, real streaming ASR
     2400 ms  interim           "what didn't like her"                 <- the recogniser stumbles...
     2900 ms  interim           'what did microsoft'                   <- ...and revises itself
     4300 ms  speculate #1 'what did microsoft announced that it would rename'           (~514 ms, GOLD)
@@ -38,7 +38,61 @@ without look-ahead the wait would have been 770 ms
 
 ## Results
 
-«RESULTS»
+Benchmarked on **4,018 questions read aloud by people**, streamed through a real
+streaming recogniser, with retrieval over 19,831 passages. Every number below is
+deterministic and reproduced by `forehear bench` in a few minutes on a laptop
+([full results](results/RESULTS.md), [method](docs/benchmark.md)).
+
+**Most speech stacks give you interim transcripts and a final end of turn**
+(Deepgram Nova, AssemblyAI, Google, AWS, Whisper-based). Mean time from end of
+turn until retrieved context is ready:
+
+| retrieval path (median latency) | retrieve after end of turn | **forehear** (`stable_prefix`) | ready at end of turn | calls / turn | recall@5 Δ |
+|---|---:|---:|---:|---:|---:|
+| hosted vector DB (250 ms) | 280 ms | **76 ms** (−73%) | 67% | 3.5 | −2.9 pt |
+| + reranker (750 ms) | 806 ms | **392 ms** (−51%) | 35% | 3.5 | −3.3 pt |
+| web search / tool (1.6 s) | 1,790 ms | **1,347 ms** (−25%) | 9% | 3.5 | −2.0 pt |
+| in-process index (8 ms) | 10 ms | 2 ms | 80% | 3.5 | −1.3 pt |
+
+**If your stack has an eager end-of-turn signal** (Deepgram Flux, LiveKit
+preflight, Pipecat eager strategies), retrieving on it is today's best option,
+and the bar forehear has to beat:
+
+| retrieval path | after end of turn | on eager EOT | **forehear** (`stable_prefix`) | **forehear** (`adaptive`) |
+|---|---:|---:|---:|---:|
+| hosted vector DB | 280 ms | 45 ms · 1.1 calls | **17 ms** · 4.0 calls | 22 ms · 2.7 calls |
+| + reranker | 806 ms | 507 ms · 1.1 calls | **323 ms** · 4.0 calls | 352 ms · 2.8 calls |
+| web search / tool | 1,790 ms | 1,490 ms · 1.1 calls | **1,327 ms** · 4.0 calls | 1,348 ms · 2.8 calls |
+
+What the benchmark says, including where look-ahead *doesn't* help:
+
+* **The answer is often findable before the user finishes.** One second before
+  the last word, the interim transcript already retrieves a correct passage in
+  43% of turns (final transcript: 76%).
+* **It pays most where the wait is longest: slow retrieval and no eager signal.**
+  With an eager end-of-turn signal and a fast hosted KB, retrieving on that signal
+  already gets you within ~30 ms. A local index has nothing to win;
+  `Adaptive` measures that and switches itself off (1.01 calls/turn).
+* **The cost is retrieval calls, not LLM calls:** about 3.5 per turn by default,
+  2.6 with `stable_prefix_lean` or `Adaptive(budget=3)` for most of the savings.
+  (Deepgram's eager mode costs 50-70% more *LLM* calls.)
+* **Reuse has a quality price, and you choose it.** Accepting a guess that covers
+  80% of the final query's content words costs about 3 points of recall@5.
+  `ResultOverlap(0.8)` cuts that to under 1 point, and `ResultOverlap(0.9)` is lossless
+  (on this benchmark) while still saving 261 ms per turn behind a reranker.
+* **Waiting for the recogniser to "settle" loses.** Trusting only words two
+  hypotheses agree on (LocalAgreement, standard in simultaneous translation)
+  does worse than a plain timer. The last words of a question never get a second
+  hypothesis, and they are the words retrieval needs.
+* Results hold with dense retrieval ([`results/dense/`](results/dense/RESULTS.md)).
+
+<p align="center">
+  <img src="results/retrievability.png" width="49%" alt="Share of turns whose interim transcript already retrieves a correct passage, by time before end of speech">
+  <img src="results/validator_sweep.png" width="49%" alt="Latency saved vs recall change for two reuse validators">
+</p>
+<p align="center">
+  <img src="results/tradeoff_interims_only.png" width="98%" alt="Mean wait vs retrieval calls per turn for every policy and latency profile">
+</p>
 
 ## Install
 
@@ -126,7 +180,7 @@ There was no open way to measure this, so forehear ships one. It uses **real
 human speech, real streaming-ASR revisions and real retrieval**, and is
 deterministic and CPU-only:
 
-* «N_TURNS» questions **read aloud by people** (HeySQuAD), streamed through
+* 4,018 questions **read aloud by people** (HeySQuAD), streamed through
   Vosk in 100 ms chunks. Every interim hypothesis is recorded, including
   revisions such as "what didn't like her" → "what did microsoft".
 * Retrieval over all 19,831 SQuAD v2 paragraphs (BM25, or dense with `--retriever dense`).
