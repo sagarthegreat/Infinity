@@ -15,7 +15,14 @@ from ..retrievers import BM25Index, DenseIndex
 from ..text import normalize
 from .data import Turn, load_corpus, load_turns
 from .latency import PROFILES, LatencyProfile
-from .runner import SCENARIOS, retrievability_curve, run_matrix, standard_policies, validator_sweep
+from .runner import (
+    SCENARIOS,
+    eot_sweep,
+    retrievability_curve,
+    run_matrix,
+    standard_policies,
+    validator_sweep,
+)
 from .sim import Oracle, SearchCache, Timing, _turn_events
 
 __all__ = ["main"]
@@ -71,6 +78,16 @@ def cmd_bench(args: argparse.Namespace) -> int:
         if not args.no_extras
         else []
     )
+    eot_rows = (
+        eot_sweep(
+            turns,
+            search,
+            [p for p in profiles if p.name in ("hosted_kb", "rerank")] or profiles[:1],
+            asr_lag_ms=args.asr_lag_ms,
+        )
+        if not args.no_extras
+        else []
+    )
     _log(f"simulated in {time.time() - t0:.1f}s ({len(search):,} distinct queries)")
 
     from .report import markdown_report, plot_all, write_json
@@ -79,8 +96,11 @@ def cmd_bench(args: argparse.Namespace) -> int:
     out.mkdir(parents=True, exist_ok=True)
     meta["version"] = __version__
     meta["profiles"] = {p.name: {"median_ms": p.median_ms, "p95_ms": p.p95_ms} for p in profiles}
-    write_json(out / "results.json", {"meta": meta, "rows": rows, "retrievability": curve, "sweep": sweep})
-    report = markdown_report(rows, curve, sweep, meta)
+    write_json(
+        out / "results.json",
+        {"meta": meta, "rows": rows, "retrievability": curve, "sweep": sweep, "eot_sweep": eot_rows},
+    )
+    report = markdown_report(rows, curve, sweep, meta, eot_rows)
     (out / "RESULTS.md").write_text(report)
     if not args.no_plots:
         try:

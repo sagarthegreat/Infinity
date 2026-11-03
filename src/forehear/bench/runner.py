@@ -17,6 +17,7 @@ from .sim import Oracle, SearchCache, Timing, simulate
 
 __all__ = [
     "SCENARIOS",
+    "eot_sweep",
     "PolicySpec",
     "retrievability_curve",
     "run_matrix",
@@ -165,6 +166,28 @@ def validator_sweep(
             rows.append(
                 {"validator": vname, "threshold": th, "profile": profile.name, **summarize(results).as_dict()}
             )
+    return rows
+
+
+def eot_sweep(
+    turns: Sequence[Turn],
+    search: SearchCache,
+    profiles: Sequence[LatencyProfile],
+    eot_values_ms: Sequence[float] = (300.0, 500.0, 800.0),
+    policy_names: Sequence[str] = ("final_only", "stable_prefix", "adaptive"),
+    asr_lag_ms: float = 0.0,
+) -> list[dict[str, Any]]:
+    """How the turn detector's end-of-turn delay changes what look-ahead can save."""
+    specs = {s.name: s for s in standard_policies()}
+    rows = []
+    for profile in profiles:
+        for eot in eot_values_ms:
+            timing = Timing(asr_lag_ms=asr_lag_ms, eager_ms=None, eot_ms=eot)
+            for name in policy_names:
+                results = simulate(turns, specs[name].factory, search, profile, timing)
+                rows.append(
+                    {"eot_ms": eot, "profile": profile.name, "policy": name, **summarize(results).as_dict()}
+                )
     return rows
 
 

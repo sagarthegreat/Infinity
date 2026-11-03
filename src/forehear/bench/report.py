@@ -73,6 +73,7 @@ def markdown_report(
     curve: Sequence[dict[str, float]],
     sweep: Sequence[dict[str, Any]],
     meta: dict[str, Any],
+    eot_rows: Sequence[dict[str, Any]] = (),
 ) -> str:
     md = ["# forehear benchmark results\n"]
     md.append(
@@ -109,6 +110,18 @@ def markdown_report(
             md.append(
                 f"| `{s['validator']}` | {s['threshold']:.1f} | {_ms(s['wait_mean_ms'])} | "
                 f"{_ms(s['saved_mean_ms'])} | {_pct(s['coverage'])} | {100 * s['recall_delta']:+.1f} pt |\n"
+            )
+    if eot_rows:
+        md.append("\n## Turn-detector sensitivity (interims only)\n")
+        md.append(
+            "End of turn fires this long after the last word. Faster detectors leave look-ahead "
+            "less time.\n\n| profile | end of turn | policy | wait mean | saved mean | calls/turn |"
+            "\n|---|---:|---|---:|---:|---:|\n"
+        )
+        for r in eot_rows:
+            md.append(
+                f"| `{r['profile']}` | {r['eot_ms']:.0f} ms | `{r['policy']}` | {_ms(r['wait_mean_ms'])} | "
+                f"{_ms(r['saved_mean_ms'])} | {r['calls_per_turn']:.2f} |\n"
             )
     md.append(
         "\n### Column guide\n\n"
