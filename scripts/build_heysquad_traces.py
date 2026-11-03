@@ -172,6 +172,12 @@ def _salvage(path: Path) -> list[str]:
     return out
 
 
+def _gzip_text(path: Path) -> io.TextIOWrapper:
+    """A gzip text writer with a fixed header timestamp, so rebuilds are byte-identical."""
+    raw = open(path, "wb")  # noqa: SIM115 - closed with the wrapper
+    return io.TextIOWrapper(gzip.GzipFile(fileobj=raw, mode="wb", mtime=0), encoding="utf-8")
+
+
 def build_corpus(heysquad_dir: Path, squad_train: Path, out: Path) -> int:
     import pyarrow.parquet as pq
 
@@ -190,7 +196,7 @@ def build_corpus(heysquad_dir: Path, squad_train: Path, out: Path) -> int:
                     "title": (titles[i] if titles else "").replace("_", " "),
                     "text": " ".join(ctx.split()),
                 }
-    with gzip.open(out, "wt", encoding="utf-8") as fh:
+    with _gzip_text(out) as fh:
         for rec in sorted(seen.values(), key=lambda r: r["id"]):
             fh.write(json.dumps(rec, ensure_ascii=False) + "\n")
     return len(seen)
@@ -237,7 +243,7 @@ def main() -> int:
     tmp_path = traces_path.with_suffix(".part")
     with (
         mp.Pool(args.workers, initializer=_init, initargs=(str(args.vosk_model),)) as pool,
-        gzip.open(tmp_path, "wt", encoding="utf-8") as fh,
+        _gzip_text(tmp_path) as fh,
     ):
         for line in previous:
             fh.write(line + "\n")
