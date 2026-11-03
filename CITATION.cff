@@ -1,0 +1,16 @@
+cff-version: 1.2.0
+message: "If you use forehear or its benchmark, please cite it as below."
+title: "forehear: look-ahead retrieval for voice agents"
+type: software
+authors:
+  - alias: sagarthegreat
+repository-code: "https://github.com/sagarthegreat/Infinity"
+license: Apache-2.0
+version: 0.1.0
+date-released: 2026-11-03
+keywords:
+  - voice agents
+  - retrieval-augmented generation
+  - speculative execution
+  - streaming ASR
+  - latency

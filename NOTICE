@@ -1,0 +1,13 @@
+forehear
+Copyright 2026 sagarthegreat and forehear contributors
+
+This product is licensed under the Apache License, Version 2.0 (see LICENSE).
+
+The benchmark data in data/ is distributed under its own licenses:
+
+- data/heysquad_dev_vosk.jsonl.gz is derived from HeySQuAD (Wu et al., 2023,
+  arXiv:2304.13689), licensed CC BY 4.0. Transcripts were produced with Vosk
+  (Alpha Cephei, Apache 2.0).
+- data/squad_v2_passages.jsonl.gz contains paragraphs from SQuAD 2.0
+  (Rajpurkar, Jia & Liang, 2018), licensed CC BY-SA 4.0. Redistributions of
+  this file must keep the same license.
