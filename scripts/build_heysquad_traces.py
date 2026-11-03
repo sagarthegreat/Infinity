@@ -147,13 +147,29 @@ def process_row(row: dict) -> dict | None:
     }
 
 
-def iter_rows(heysquad_dir: Path):
+def iter_rows(heysquad_dir: Path, *, with_audio: bool = True):
     import pyarrow.parquet as pq
 
     for f in sorted(heysquad_dir.glob("validation-*.parquet")):
         pf = pq.ParquetFile(f)
-        for batch in pf.iter_batches(batch_size=64):
+        columns = None if with_audio else ["id"]
+        for batch in pf.iter_batches(batch_size=64, columns=columns):
             yield from batch.to_pylist()
+
+
+def _salvage(path: Path) -> list[str]:
+    """Complete JSON lines from a (possibly truncated) gzip file."""
+    import zlib
+
+    text = zlib.decompressobj(16 + zlib.MAX_WBITS).decompress(path.read_bytes()).decode("utf-8", "ignore")
+    out = []
+    for line in text.split("\n")[:-1]:
+        try:
+            json.loads(line)
+        except ValueError:
+            break
+        out.append(line)
+    return out
 
 
 def build_corpus(heysquad_dir: Path, squad_train: Path, out: Path) -> int:
@@ -188,36 +204,55 @@ def main() -> int:
     ap.add_argument("--out", type=Path, default=Path("data"))
     ap.add_argument("--workers", type=int, default=mp.cpu_count())
     ap.add_argument("--limit", type=int, default=0)
+    ap.add_argument(
+        "--resume",
+        action="store_true",
+        help="keep complete records from an interrupted run and continue after the last one",
+    )
     args = ap.parse_args()
     args.out.mkdir(parents=True, exist_ok=True)
 
     n_docs = build_corpus(args.heysquad, args.squad_train, args.out / "squad_v2_passages.jsonl.gz")
     print(f"corpus: {n_docs} passages", file=sys.stderr)
 
-    rows = iter_rows(args.heysquad)
-    if args.limit:
-        rows = (r for i, r in zip(range(args.limit), rows, strict=False))
-    kept = dropped_align = dropped_empty = 0
-    t0 = time.time()
     traces_path = args.out / "heysquad_dev_vosk.jsonl.gz"
+    previous = _salvage(traces_path) if args.resume and traces_path.exists() else []
+    skip_until = -1
+    if previous:
+        last_id = json.loads(previous[-1])["id"]
+        ids = [r["id"] for r in iter_rows(args.heysquad, with_audio=False)]
+        skip_until = ids.index(last_id)
+        print(f"resuming after source row {skip_until} ({len(previous)} records kept)", file=sys.stderr)
+
+    def todo():
+        for i, r in enumerate(iter_rows(args.heysquad)):
+            if args.limit and i >= args.limit:
+                return
+            if i > skip_until:
+                yield r
+
+    kept = len(previous)
+    processed = skip_until + 1
+    t0 = time.time()
+    tmp_path = traces_path.with_suffix(".part")
     with (
         mp.Pool(args.workers, initializer=_init, initargs=(str(args.vosk_model),)) as pool,
-        gzip.open(traces_path, "wt", encoding="utf-8") as fh,
+        gzip.open(tmp_path, "wt", encoding="utf-8") as fh,
     ):
-        for i, rec in enumerate(pool.imap(process_row, rows, chunksize=4)):
-            if rec is None:
-                dropped_empty += 1
-            elif rec["alignment"] < MIN_ALIGNMENT:
-                dropped_align += 1
-            else:
+        for line in previous:
+            fh.write(line + "\n")
+        for i, rec in enumerate(pool.imap(process_row, todo(), chunksize=4)):
+            processed += 1
+            if rec is not None and rec["alignment"] >= MIN_ALIGNMENT:
                 fh.write(json.dumps(rec, ensure_ascii=False, separators=(",", ":")) + "\n")
                 kept += 1
             if (i + 1) % 250 == 0:
-                print(f"{i + 1} rows, {time.time() - t0:.0f}s", file=sys.stderr)
+                print(f"{i + 1} rows, {time.time() - t0:.0f}s", file=sys.stderr, flush=True)
+    tmp_path.replace(traces_path)
     stats = {
+        "source_rows": processed,
         "kept": kept,
-        "dropped_misaligned": dropped_align,
-        "dropped_no_speech": dropped_empty,
+        "dropped_misaligned_or_silent": processed - kept,
         "min_alignment": MIN_ALIGNMENT,
         "chunk_ms": CHUNK_MS,
         "asr": f"vosk / {args.vosk_model.name}",
