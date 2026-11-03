@@ -72,6 +72,10 @@ class SearchCache:
             self._cache[key] = hit
         return hit
 
+    def ids(self, query: str) -> list[str]:
+        """Top-k ids for ``query``: a ready-made ``ResultOverlap`` probe."""
+        return [d.id for d in self(query)]
+
     def __len__(self) -> int:
         return len(self._cache)
 

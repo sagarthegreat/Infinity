@@ -57,14 +57,17 @@ def cmd_bench(args: argparse.Namespace) -> int:
         for name, t in SCENARIOS.items()
         if not args.scenarios or name in args.scenarios
     }
-    policies = [p for p in standard_policies() if not args.policies or p.name in args.policies]
+    probe = search.ids
+    policies = [p for p in standard_policies(probe=probe) if not args.policies or p.name in args.policies]
     meta["eot_ms"] = args.eot_ms
     t0 = time.time()
     rows = run_matrix(turns, search, scenarios=scenarios, profiles=profiles, policies=policies, progress=_log)
     curve = retrievability_curve(turns, search) if not args.no_extras else []
     sweep_profile = PROFILES["rerank"] if "rerank" in PROFILES else profiles[0]
     sweep = (
-        validator_sweep(turns, search, sweep_profile, Timing(asr_lag_ms=args.asr_lag_ms, eot_ms=args.eot_ms))
+        validator_sweep(
+            turns, search, sweep_profile, Timing(asr_lag_ms=args.asr_lag_ms, eot_ms=args.eot_ms), probe=probe
+        )
         if not args.no_extras
         else []
     )
@@ -99,9 +102,10 @@ def cmd_replay(args: argparse.Namespace) -> int:
     if turn is None:
         _log(f"unknown turn id {args.turn}")
         return 2
-    spec = {p.name: p for p in standard_policies()}.get(args.policy)
+    specs = standard_policies(probe=search.ids)
+    spec = {p.name: p for p in specs}.get(args.policy)
     if spec is None:
-        _log(f"unknown policy {args.policy}; choose from {', '.join(p.name for p in standard_policies())}")
+        _log(f"unknown policy {args.policy}; choose from {', '.join(p.name for p in specs)}")
         return 2
     profile: LatencyProfile = PROFILES[args.profile]
     scen = SCENARIOS[args.scenario]

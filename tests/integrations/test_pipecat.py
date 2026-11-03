@@ -90,3 +90,31 @@ async def test_old_injections_are_replaced() -> None:
     assert stale not in messages
     assert sum(1 for m in messages if str(m.get("content", "")).startswith(MARKER)) == 1
     assert "Shipping" in messages[-2]["content"]
+
+
+async def test_pipecat_speculative_inference_reuses_context() -> None:
+    """A speculative LLMContextFrame (Pipecat eager EOT) and the final one share one retrieval."""
+    calls: list[str] = []
+
+    async def retrieve(query: str):
+        calls.append(query)
+        return INDEX.search(query, 1)
+
+    la = Lookahead(retrieve, StablePrefix())
+    tap, inject = lookahead_processors(la)
+    text = "how long does shipping take"
+    ctx_spec = LLMContext(messages=[{"role": "user", "content": text}])
+    ctx_final = LLMContext(messages=[{"role": "user", "content": text}])
+    down, _ = await run_test(
+        Pipeline([tap, inject]),
+        frames_to_send=[
+            LLMContextFrame(context=ctx_spec, speculation=True),
+            SleepFrame(sleep=0.05),
+            LLMContextFrame(context=ctx_final),
+        ],
+    )
+    frames = [f for f in down if isinstance(f, LLMContextFrame)]
+    assert [f.speculation for f in frames] == [True, False]
+    for f in frames:
+        assert "Shipping takes" in f.context.get_messages()[-2]["content"]
+    assert calls == [text]  # one retrieval served both inferences

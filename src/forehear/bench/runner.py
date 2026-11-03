@@ -9,7 +9,7 @@ from typing import Any
 from ..controller import Controller
 from ..policies import Adaptive, EagerEndOfTurn, FinalOnly, FixedInterval, StablePrefix
 from ..text import normalize
-from ..validators import ExactMatch, TokenCoverage, Validator
+from ..validators import ExactMatch, ResultOverlap, TokenCoverage, Validator
 from .data import Turn
 from .latency import PROFILES, LatencyProfile
 from .metrics import summarize
@@ -45,14 +45,23 @@ SCENARIOS: dict[str, Timing] = {
 }
 
 
-def standard_policies(validator: Validator | None = None) -> list[PolicySpec]:
-    """The policies reported in the README."""
+def standard_policies(
+    validator: Validator | None = None,
+    probe: Callable[[str], Sequence[str]] | None = None,
+) -> list[PolicySpec]:
+    """The policies reported in the README.
+
+    Args:
+        validator: Reuse validator for speculative policies (default ``TokenCoverage(0.8)``).
+        probe: Cheap first-stage retriever (``query -> ids``). When given, a
+            ``ResultOverlap`` variant is added.
+    """
     v = validator or TokenCoverage(0.8)
 
-    def ctl(policy: Any, val: Validator | None = None, **kw: Any) -> ControllerFactory:
-        return lambda: Controller(policy() if callable(policy) else policy, val or v, **kw)
+    def ctl(make_policy: Callable[[], Any], val: Validator | None = None, **kw: Any) -> ControllerFactory:
+        return lambda: Controller(make_policy(), val or v, **kw)
 
-    return [
+    specs = [
         PolicySpec(
             "final_only", ctl(FinalOnly, ExactMatch()), "Retrieve on the final transcript (no look-ahead)."
         ),
@@ -69,20 +78,36 @@ def standard_policies(validator: Validator | None = None) -> list[PolicySpec]:
         ),
         PolicySpec("interval_500ms", ctl(lambda: FixedInterval(500.0)), "Latest hypothesis every 500 ms."),
         PolicySpec(
-            "stable_prefix",
-            ctl(lambda: StablePrefix(agreement=2, min_new_content_words=1)),
-            "Words two consecutive hypotheses agree on, when a new content word appears.",
+            "local_agreement",
+            ctl(lambda: StablePrefix(agreement=2, min_content_words=2)),
+            "Only words two consecutive hypotheses agree on (LocalAgreement-2).",
         ),
         PolicySpec(
-            "stable_prefix_eager",
-            ctl(lambda: StablePrefix(agreement=1, min_new_content_words=1)),
-            "Every hypothesis with a new content word (most aggressive).",
+            "stable_prefix",
+            ctl(lambda: StablePrefix()),
+            "forehear default: latest hypothesis once it has 3+ content words and a new one.",
         ),
-        PolicySpec("adaptive", ctl(Adaptive), "Stable prefix with prefetch-style accuracy throttling."),
+        PolicySpec(
+            "stable_prefix_lean",
+            ctl(lambda: StablePrefix(min_content_words=4)),
+            "As stable_prefix, but waits for 4+ content words (fewer calls).",
+        ),
+    ]
+    if probe is not None:
+        specs.append(
+            PolicySpec(
+                "stable_prefix_overlap",
+                ctl(lambda: StablePrefix(), ResultOverlap(probe, k=5, threshold=0.8)),
+                "stable_prefix, reusing only if a cheap first stage returns >=4 of the same top-5.",
+            )
+        )
+    specs += [
+        PolicySpec("adaptive", ctl(Adaptive), "stable_prefix levels steered by a 3-calls-per-turn budget."),
         PolicySpec(
             "oracle", ctl(Oracle, ExactMatch()), "Upper bound: the final transcript, on the first interim."
         ),
     ]
+    return specs
 
 
 def run_matrix(
@@ -122,23 +147,24 @@ def validator_sweep(
     search: SearchCache,
     profile: LatencyProfile,
     timing: Timing,
-    thresholds: Sequence[float] = (0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0),
+    thresholds: Sequence[float] = (0.4, 0.6, 0.8, 0.9, 1.0),
+    probe: Callable[[str], Sequence[str]] | None = None,
 ) -> list[dict[str, Any]]:
     """How the reuse threshold trades latency for retrieval quality."""
     rows = []
 
-    def factory(th: float) -> ControllerFactory:
-        return lambda: Controller(StablePrefix(agreement=1), TokenCoverage(th))
+    def factory(make: Callable[[float], Validator], th: float) -> ControllerFactory:
+        return lambda: Controller(StablePrefix(), make(th))
 
-    for th in thresholds:
-        results = simulate(
-            turns,
-            factory(th),
-            search,
-            profile,
-            timing,
-        )
-        rows.append({"threshold": th, "profile": profile.name, **summarize(results).as_dict()})
+    validators: list[tuple[str, Callable[[float], Validator]]] = [("token_coverage", TokenCoverage)]
+    if probe is not None:
+        validators.append(("result_overlap", lambda th: ResultOverlap(probe, k=5, threshold=th)))
+    for vname, make in validators:
+        for th in thresholds:
+            results = simulate(turns, factory(make, th), search, profile, timing)
+            rows.append(
+                {"validator": vname, "threshold": th, "profile": profile.name, **summarize(results).as_dict()}
+            )
     return rows
 
 

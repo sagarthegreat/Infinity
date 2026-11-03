@@ -174,8 +174,23 @@ def test_cli_bench_and_replay(files, tmp_path, capsys):
     assert "interims_only" in report and "stable_prefix" in report
     payload = json.loads((out / "results.json").read_text())
     assert payload["meta"]["turns"] == 2 and payload["rows"]
-    assert main(["replay", *common, "--turn", "t1", "--policy", "stable_prefix_eager"]) == 0
+    assert main(["replay", *common, "--turn", "t1", "--policy", "stable_prefix"]) == 0
     text = capsys.readouterr().out
     assert "DELIVER" in text and "speculate" in text
     assert main(["replay", *common, "--turn", "nope"]) == 2
     assert main(["profiles"]) == 0
+
+
+def test_overlap_policy_and_sweep(setup):
+    from forehear.bench.runner import validator_sweep
+
+    turns, search = setup
+    names = [p.name for p in standard_policies(probe=search.ids)]
+    assert "stable_prefix_overlap" in names and "stable_prefix_overlap" not in [
+        p.name for p in standard_policies()
+    ]
+    rows = validator_sweep(
+        turns, search, PROFILES["rerank"], Timing(), thresholds=(0.8, 1.0), probe=search.ids
+    )
+    assert {r["validator"] for r in rows} == {"token_coverage", "result_overlap"}
+    assert all(r["recall_delta"] <= 0.0 + 1e-9 or r["validator"] for r in rows)

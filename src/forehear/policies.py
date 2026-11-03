@@ -146,20 +146,23 @@ def _common_prefix(seqs: Sequence[list[str]]) -> list[str]:
 
 
 class StablePrefix(Policy):
-    """Fire when a *stable* prefix of the hypothesis has gained new content words.
+    """Fire when the hypothesis has gained new content words.
 
-    Streaming ASR revises its hypotheses ("what didn't like" becomes "what did
-    microsoft"), so querying every interim wastes calls on words that are
-    about to change. Following the LocalAgreement idea from streaming
-    speech translation, this policy only trusts the words that the last
-    ``agreement`` hypotheses agree on, optionally holds back the trailing
-    ``holdback`` words, and fires when that stable prefix contains at least
-    ``min_new_content_words`` content words that were not in the previous
+    The query is the words the last ``agreement`` hypotheses agree on (the
+    LocalAgreement idea from streaming speech translation), minus ``holdback``
+    trailing words. It fires once it has at least ``min_content_words``
+    non-stopwords and ``min_new_content_words`` that were not in the previous
     query.
+
+    Defaults come from the benchmark (``docs/benchmark.md``). Waiting for
+    agreement (``agreement=2``) or holding back words *loses*: the last words
+    of an utterance are never confirmed by a later hypothesis, and they are
+    the words retrieval needs most. Requiring three content words, on the other
+    hand, skips most doomed early calls for almost no loss in savings.
 
     Args:
         agreement: Number of consecutive hypotheses that must agree on a word.
-            ``1`` trusts every interim.
+            ``1`` (default) trusts every interim.
         holdback: Extra trailing words to drop from the stable prefix.
         min_content_words: Minimum non-stopwords in a query.
         min_new_content_words: Minimum non-stopwords not present in the last
@@ -171,10 +174,10 @@ class StablePrefix(Policy):
 
     def __init__(
         self,
-        agreement: int = 2,
+        agreement: int = 1,
         *,
         holdback: int = 0,
-        min_content_words: int = 2,
+        min_content_words: int = 3,
         min_new_content_words: int = 1,
         fire_on_eager: bool = True,
     ) -> None:
@@ -220,7 +223,7 @@ class StablePrefix(Policy):
 
 @dataclass(frozen=True, slots=True)
 class _Level:
-    agreement: int
+    min_content_words: int
     min_new_content_words: int
     speculate: bool = True
 
@@ -257,12 +260,14 @@ class Adaptive(Policy):
 
     name = "adaptive"
 
+    #: Ordered from cheapest to most aggressive; each step is on the benchmark's
+    #: cost/latency frontier.
     LEVELS: tuple[_Level, ...] = (
-        _Level(agreement=1, min_new_content_words=1, speculate=False),  # eager EOT only
-        _Level(agreement=3, min_new_content_words=3),
-        _Level(agreement=2, min_new_content_words=2),
-        _Level(agreement=2, min_new_content_words=1),
-        _Level(agreement=1, min_new_content_words=1),
+        _Level(min_content_words=99, min_new_content_words=99, speculate=False),  # eager EOT only
+        _Level(min_content_words=5, min_new_content_words=2),
+        _Level(min_content_words=4, min_new_content_words=1),
+        _Level(min_content_words=3, min_new_content_words=1),
+        _Level(min_content_words=2, min_new_content_words=1),
     )
 
     def __init__(
@@ -274,7 +279,6 @@ class Adaptive(Policy):
         window: int = 16,
         target_coverage: float = 0.95,
         late_fraction: float = 0.10,
-        min_content_words: int = 2,
         holdback: int = 0,
     ) -> None:
         if not 0 <= start_level < len(self.LEVELS):
@@ -287,7 +291,6 @@ class Adaptive(Policy):
         self.window = window
         self.target_coverage = target_coverage
         self.late_fraction = late_fraction
-        self.min_content_words = min_content_words
         self.holdback = holdback
         self._history: deque[TurnOutcome] = deque(maxlen=window)
         self._latencies: deque[float] = deque(maxlen=4 * window)
@@ -298,9 +301,9 @@ class Adaptive(Policy):
     def _make_inner(self) -> StablePrefix:
         lvl = self.LEVELS[self.level]
         return StablePrefix(
-            agreement=lvl.agreement,
+            agreement=1,
             holdback=self.holdback,
-            min_content_words=self.min_content_words,
+            min_content_words=lvl.min_content_words,
             min_new_content_words=lvl.min_new_content_words,
         )
 

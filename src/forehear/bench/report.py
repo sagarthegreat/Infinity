@@ -14,8 +14,10 @@ POLICY_ORDER = [
     "eager_eot",
     "interval_1000ms",
     "interval_500ms",
+    "local_agreement",
     "stable_prefix",
-    "stable_prefix_eager",
+    "stable_prefix_lean",
+    "stable_prefix_overlap",
     "adaptive",
     "oracle",
 ]
@@ -98,12 +100,15 @@ def markdown_report(
             md.append(f"| {c['offset_ms']:+.0f} | {_pct(c['retrievable'])} | {_pct(c['speaking'])} |\n")
         md.append(f"\nFinal transcript recall@{meta['k']}: {_pct(curve[0]['final_recall'])}.\n")
     if sweep:
-        md.append(f"\n## Reuse threshold sweep (`stable_prefix_eager`, `{sweep[0]['profile']}`)\n")
-        md.append("| TokenCoverage threshold | wait mean | coverage | recall@k Δ |\n|---:|---:|---:|---:|\n")
+        md.append(f"\n## Reuse validator sweep (`stable_prefix`, `{sweep[0]['profile']}`, interims only)\n")
+        md.append(
+            "| validator | threshold | wait mean | saved mean | coverage | recall@k Δ |\n"
+            "|---|---:|---:|---:|---:|---:|\n"
+        )
         for s in sweep:
             md.append(
-                f"| {s['threshold']:.1f} | {_ms(s['wait_mean_ms'])} | {_pct(s['coverage'])} | "
-                f"{100 * s['recall_delta']:+.1f} pt |\n"
+                f"| `{s['validator']}` | {s['threshold']:.1f} | {_ms(s['wait_mean_ms'])} | "
+                f"{_ms(s['saved_mean_ms'])} | {_pct(s['coverage'])} | {100 * s['recall_delta']:+.1f} pt |\n"
             )
     md.append(
         "\n### Column guide\n\n"
@@ -163,7 +168,7 @@ def plot_all(
         ax.set_ylabel("% of turns")
         ax.set_ylim(0, 100)
         ax.set_title("How early is the answer findable?")
-        ax.legend(loc="upper left", fontsize=8, frameon=False)
+        ax.legend(loc="lower right", fontsize=8, frameon=False)
         fig.tight_layout()
         p = out / "retrievability.png"
         fig.savefig(p, dpi=160)
@@ -175,8 +180,10 @@ def plot_all(
         "eager_eot": "#9333ea",
         "interval_1000ms": "#f59e0b",
         "interval_500ms": "#ea580c",
+        "local_agreement": "#a16207",
         "stable_prefix": "#2563eb",
-        "stable_prefix_eager": "#0891b2",
+        "stable_prefix_lean": "#0891b2",
+        "stable_prefix_overlap": "#db2777",
         "adaptive": "#16a34a",
         "oracle": "#94a3b8",
     }
@@ -199,27 +206,42 @@ def plot_all(
             ax.grid(alpha=0.3)
         axes[0][0].set_ylabel("mean wait after end of turn (ms)")
         handles, labels = axes[0][0].get_legend_handles_labels()
-        fig.legend(handles, labels, loc="lower center", ncol=min(8, len(labels)), fontsize=7, frameon=False)
+        fig.legend(handles, labels, loc="lower center", ncol=min(5, len(labels)), fontsize=7, frameon=False)
         fig.suptitle(f"Latency vs. cost - scenario: {scen}", fontsize=11)
-        fig.tight_layout(rect=(0, 0.1, 1, 1))
+        fig.tight_layout(rect=(0, 0.14, 1, 1))
         p = out / f"tradeoff_{scen}.png"
         fig.savefig(p, dpi=160)
         plt.close(fig)
         written.append(p)
 
     if sweep:
-        fig, ax1 = plt.subplots(figsize=(6, 3.4))
-        th = [s["threshold"] for s in sweep]
-        ax1.plot(th, [s["wait_mean_ms"] for s in sweep], marker="o", color="#2563eb", label="mean wait (ms)")
-        ax1.set_xlabel("TokenCoverage reuse threshold")
-        ax1.set_ylabel("mean wait (ms)", color="#2563eb")
-        ax2 = ax1.twinx()
-        ax2.plot(
-            th, [100 * s["recall_delta"] for s in sweep], marker="s", color="#dc2626", label="recall Δ (pt)"
-        )
-        ax2.set_ylabel("recall@k change (pt)", color="#dc2626")
-        ax2.spines["right"].set_visible(True)
-        ax1.set_title(f"Reuse threshold: latency vs. quality ({sweep[0]['profile']})")
+        fig, ax = plt.subplots(figsize=(6.4, 3.8))
+        styles = {"token_coverage": ("#2563eb", "o"), "result_overlap": ("#db2777", "s")}
+        for vname in dict.fromkeys(s["validator"] for s in sweep):
+            pts = [s for s in sweep if s["validator"] == vname]
+            color, marker = styles.get(vname, ("#0f172a", "^"))
+            ax.plot(
+                [s["saved_mean_ms"] for s in pts],
+                [100 * s["recall_delta"] for s in pts],
+                marker=marker,
+                color=color,
+                label=vname,
+            )
+            for s in pts:
+                ax.annotate(
+                    f"{s['threshold']:.1f}",
+                    (s["saved_mean_ms"], 100 * s["recall_delta"]),
+                    textcoords="offset points",
+                    xytext=(4, 4),
+                    fontsize=7,
+                    color=color,
+                )
+        ax.axhline(0, color="#64748b", lw=0.8)
+        ax.set_xlabel("mean latency saved per turn (ms)")
+        ax.set_ylabel("recall@k change vs. final transcript (pt)")
+        ax.set_title(f"Reuse validators: latency vs. quality ({sweep[0]['profile']})")
+        ax.legend(frameon=False, fontsize=8)
+        ax.grid(alpha=0.3)
         fig.tight_layout()
         p = out / "validator_sweep.png"
         fig.savefig(p, dpi=160)

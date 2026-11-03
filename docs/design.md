@@ -70,8 +70,8 @@ Built-in policies:
 | `FinalOnly` | never | today's default |
 | `EagerEndOfTurn` | on the eager end-of-turn signal | Deepgram Flux / LiveKit preflight / Pipecat eager strategies |
 | `FixedInterval(ms)` | the latest hypothesis every *ms* | Stream RAG fixed-interval mode |
-| `StablePrefix(agreement=n)` | when the words the last *n* hypotheses agree on gain a new content word | LocalAgreement in streaming speech translation |
-| `Adaptive(budget=b)` | `StablePrefix` at a level chosen from measured cost, coverage, lateness and retriever speed | feedback-directed hardware prefetching |
+| `StablePrefix()` | when the hypothesis has 3+ content words and gains a new one (optionally: only words *n* hypotheses agree on) | LocalAgreement in streaming speech translation; defaults tuned on the benchmark |
+| `Adaptive(budget=b)` | `StablePrefix` at a level chosen from measured calls/turn, coverage, lateness and retriever speed; off when retrieval is already fast | feedback-directed hardware prefetching |
 
 ### Validators decide reuse
 
